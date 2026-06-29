@@ -1,0 +1,68 @@
+\documentclass[11pt]{article}
+
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage[left=25mm, right=25mm, top=20mm, bottom=20mm]{geometry}
+\usepackage[numbers,sort&compress]{natbib}
+\usepackage[hyphens]{url}
+\usepackage{hyperref}
+\usepackage{setspace}
+
+\hypersetup{
+    colorlinks=true,
+    urlcolor=black,
+    linkcolor=black,
+    citecolor=black
+}
+
+\setlength{\parindent}{0cm}
+\setlength{\parskip}{0.8em}
+\onehalfspacing
+
+\begin{document}
+
+\section*{Discussion of Tail-Risk Modelling Result}
+
+One key result from this analysis is that models with good average predictive performance did not necessarily well estimate the upper tail of annual medical costs. The baseline Ridge Regression and baseline Gradient Boosting models produced reasonable general prediction metrics, but both substantially under-predicted high-cost thresholds. For example, the baseline Gradient Boosting model under-predicted the 95th percentile by approximately 4,475 US dollars and the 99th percentile by approximately 9,947 US dollars. This indicates that a model can appear acceptable when judged by average error measures, while still performing poorly for the policyholders who are most important from a portfolio tail-risk perspective.
+
+This finding is important because health insurance cost data are not evenly distributed between policyholders. Medical expenditure is typically right-skewed, with a relatively small group of policyholders generating a large share of total cost. The existing literature on healthcare cost modelling recognises this as a central challenge, because models that focus on the conditional mean can not represent the high-cost region of the distribution \citep{malehi2015healthcare_costs}. In this context, the under-prediction observed in the baseline models is not simply a technical weakness. It reflects a known difficulty in modelling healthcare costs: the upper tail contains relatively rare but financially important observations.
+
+The tail-weighted models partly addressed this issue. By assigning greater importance to high-cost observations during training, these models reduced the size of upper-tail under-prediction. The tail-weighted Gradient Boosting model gave the best 95th percentile threshold estimate among the mean-cost models, while the tail-weighted Ridge model performed best for the 99th percentile and 99th percentile tail value-at-risk. This suggests that tail-sensitive training can improve estimation of high-cost policyholder risk, even if it may not always minimise average prediction error. The result also shows why model choice should depend on the purpose of the analysis. If the objective is general cost prediction, standard accuracy metrics such as RMSE and MAE are useful. However, if the objective is portfolio tail-risk estimation, then upper-tail error, quantile under-prediction, tail concentration and tail value-at-risk are more relevant.
+
+The Quantile Gradient Boosting models provided a more direct way to estimate the upper tail. These models were designed to predict high conditional quantiles rather than mean cost. Their empirical coverage was close to the intended target levels, with observed coverage of approximately 0.896 for the 90th percentile, 0.947 for the 95th percentile and 0.989 for the 99th percentile. This indicates that the quantile models were reasonably well calibrated. There was also only one quantile-crossing case in the test set, suggesting that the separately fitted upper-quantile models were largely coherent.
+
+This result is consistent with the wider literature on high-cost healthcare prediction, where machine learning methods have been used to identify high-need, high-cost patients and very high-cost insurance claimants \citep{osawa2020high_need_high_cost,maisog2019high_cost_claimants}. It also supports the use of flexible tree-based approaches in healthcare cost prediction, since these models can capture non-linear relationships and interactions between health-risk factors \citep{morid2020healthcare_cost_prediction}. However, the results suggest that flexibility alone is not sufficient. Standard Gradient Boosting still underestimated the upper tail unless the modelling objective was adapted through weighting or quantile loss.
+
+Overall, this result supports the argument that average-cost prediction alone is insufficient for health insurance tail-risk modelling. Machine learning and statistical models can both contribute to tail-risk estimation, but they need to be evaluated using metrics that reflect the financial importance of high-cost policyholders. The most useful modelling framework was therefore not a single model judged by one accuracy measure, but a comparison of mean-cost models, tail-weighted models and quantile models. This provides a more complete view of portfolio risk and is more appropriate for an insurer concerned with unusually high annual medical costs.
+
+\newpage
+
+\begin{thebibliography}{9}
+
+\bibitem[Malehi et~al.(2015)]{malehi2015healthcare_costs}
+Malehi, A. S., Pourmotahari, F., and Angali, K. A. (2015).
+\newblock Statistical models for the analysis of skewed healthcare cost data: a simulation study.
+\newblock \textit{Health Economics Review}, 5, Article 11.
+\newblock \url{https://doi.org/10.1186/s13561-015-0045-7}
+
+\bibitem[Osawa et~al.(2020)]{osawa2020high_need_high_cost}
+Osawa, I., Goto, T., Yamamoto, Y., and Tsugawa, Y. (2020).
+\newblock Machine-learning-based prediction models for high-need high-cost patients using nationwide clinical and claims data.
+\newblock \textit{npj Digital Medicine}, 3, Article 148.
+\newblock \url{https://doi.org/10.1038/s41746-020-00354-8}
+
+\bibitem[Maisog et~al.(2019)]{maisog2019high_cost_claimants}
+Maisog, J. M., Li, W., Xu, Y., Hurley, B., Shah, H., Lemberg, R., Borden, T., Bandeian, S., Schline, M., Cross, R., Spiro, A., Michael, R., and Gutfraind, A. (2019).
+\newblock Using massive health insurance claims data to predict very high-cost claimants: a machine learning approach.
+\newblock \textit{arXiv preprint arXiv:1912.13032}.
+\newblock \url{https://doi.org/10.48550/arXiv.1912.13032}
+
+\bibitem[Morid et~al.(2020)]{morid2020healthcare_cost_prediction}
+Morid, M. A., Sheng, O. R. L., Kawamoto, K., Ault, T., Dorius, J., and Abdelrahman, S. (2020).
+\newblock Healthcare Cost Prediction: Leveraging Fine-grain Temporal Patterns.
+\newblock \textit{arXiv preprint arXiv:2009.06780}.
+\newblock \url{https://doi.org/10.48550/arXiv.2009.06780}
+
+\end{thebibliography}
+
+\end{document}
