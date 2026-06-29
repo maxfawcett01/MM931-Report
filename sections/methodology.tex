@@ -1,0 +1,549 @@
+\section{Methodology}
+    
+    This thesis investigates how machine learning and statistical modelling can be used to assess cost risk within a health insurance portfolio. The analysis is centred on two research questions. First, it examines how portfolio costs respond to stress scenarios such as increased hospitalisation rates and worsening chronic disease prevalence. Second, it evaluates how statistical and machine learning models can be used to estimate tail risk in annual medical costs.
+    
+    The methodology proceeds in four linked phases. Phase 1 defines the portfolio and prepares the data set for analysis. This includes cleaning raw medical insurance data, identifying the annual medical cost variable as the modelling target, and building health-risk features related to hospitalisation, chronic disease burden, and policyholder characteristics. Phase 2 conducts an exploratory and diagnostic analysis to understand the distribution of medical costs. Particular attention is paid to skewness, high-cost observations, tail percentiles, and the relationship between health-risk factors and annual cost. This phase provides a justification for using both average-cost models and tail-aware modelling approaches.
+    
+    Phase 3 develops and compares predictive models for annual medical costs at the individual level. Ridge Regression is used as an interpretable statistical benchmark, while Gradient Boosting is used as a more flexible machine learning model capable of capturing non-linear relationships and interactions between risk factors. Several model specifications are considered, including grouped health-risk features, raw health features, interaction terms, smearing correction, robust loss functions, and tail-weighted training. These models are evaluated using both general predictive accuracy metrics and tail-specific measures.
+    
+    Phase 4 applies the fitted models to the portfolio-level risk analysis. Individual predicted costs are aggregated to estimate the total portfolio cost under baseline conditions and under adverse health-risk stress scenarios. The hospitalisation and chronic disease variables are altered to represent deterioration in portfolio health, and the resulting changes in mean cost, total cost, and upper-tail cost measures are examined. Quantile Gradient Boosting models are also used to estimate high conditional cost quantiles, including the 90th, 95th, and 99th percentiles. This allows the methodology to assess not only the expected cost, but also the risk of unusually high claims.
+    
+    The remainder of this methodology describes the data source, portfolio definition, feature engineering process, exploratory diagnostics, model specifications, evaluation metrics, tail-risk framework, stress-scenario design, model interpretation techniques, and reproducibility controls used throughout the analysis.
+    
+	\subsection{Data Source and Portfolio Definition}
+	
+	The data set used in this study was obtained from Kaggle and is titled \textit{Medical Insurance Cost Prediction} \cite{mohankrishnathalla_medical_insurance_cost_prediction}. The data set contains policyholder-level medical insurance information for 100,000 individuals, including demographic, socioeconomic, lifestyle, health-status, insurance, and claims-related variables. The response variable used throughout is the annual medical cost, which represents the yearly medical expenditure associated with each individual policyholder, measured in US dollars (USD).
+	
+	For the purposes of this study, the data set is treated as a cross-sectional health insurance portfolio. Each observation represents one insured individual, and the full dataset represents the insurer's portfolio at a fixed point in time. The modelling objective is therefore not only to predict individual annual medical costs, but also to understand how changes in the health-risk composition of the portfolio affect aggregate cost outcomes.
+	
+	Let \(Y_i\) denote the annual medical cost of the policyholder \(i\), where \(i = 1, \ldots, n\). The total observed portfolio cost is defined as
+	
+	\begin{equation} \label{eq:1}
+		S = \sum_{i=1}^{n} Y_i
+	\end{equation}
+	
+	where \(n\) is the number of policyholders in the portfolio. In the predictive modelling stage, the fitted models produce an estimated annual cost \(\hat{Y}_i\) for each policyholder. The predicted portfolio cost is then defined as
+	
+	\begin{equation} \label{eq:2}
+		\hat{S} = \sum_{i=1}^{n} \hat{Y}_i
+	\end{equation}
+	
+	This portfolio-level formulation is central to the stress scenario analysis, which examines how the insurance portfolio responds to adverse health scenarios such as increased hospitalisation rates and worsening chronic disease prevalence. By modifying selected health-risk variables and recalculating \(\hat{S}\), the analysis measures the change in the expected cost of the portfolio under stressed conditions.
+	
+	The same framework is also used to address the estimation of portfolio tail risk. Since health insurance costs are typically concentrated among a relatively small number of high-cost individuals, the analysis considers not only mean predicted cost, but also upper-tail cost measures such as the 90th, 95th and 99th percentiles. These quantities allow models to be assessed in terms of their ability to identify and estimate unusually high medical costs, rather than only their average predictive accuracy.
+	
+	The data set therefore provides a suitable structure for investigating both individual-level cost prediction and portfolio-level risk behaviour. Individual policyholders form the unit of prediction, while aggregate and tail summaries of their predicted costs form the basis for stress-scenario and tail-risk analysis.
+	
+	\subsection{Data Cleaning and Feature Engineering}
+	
+	The raw data set was imported into Python using a structured project workflow. Data were first loaded using \verb|load_raw_data()| and then passed through \verb|basic_clean()|. This initial cleaning stage standardised the column names in a consistent lower-case format, removed unnecessary spacing, and ensured that the variable names could be used reliably throughout the analysis. Duplicate records were also checked and removed where present.
+	
+	The response variable for the analysis was \verb|annual_medical_cost|. Since medical cost data are typically right-skewed, the logarithmic transformation was applied to address the asymmetry commonly associated with cost data. For the policyholder \(i\), the transformed response was defined as
+	
+	\begin{equation} \label{eq:3}
+		Y_i^{(\log)} = \log(1 + Y_i)
+	\end{equation}
+	
+	where \(Y_i\) denotes the original annual medical cost. The use of \(\log(1 + Y_i)\) reduces the influence of extreme costs during the fitting of the model while preserving all observations, including low-cost policyholders. Predictions from models fitted on the transformed scale were later converted back to the original cost scale for interpretation and portfolio-level aggregation.
+	
+	The feature engineering was then applied using \verb|prepare_model_data()|. This added the transformed target variable \verb|log1p_annual_medical_cost| and created grouped health-risk variables that were used throughout the exploratory analysis, model development, and stress-scenario design. The main grouped variables were:
+	
+	\begin{itemize}
+		\item \verb|hospitalizations_grouped|, which grouped \verb|hospitalizations_last_3yrs| into 0, 1, and 2+
+		\item \verb|chronic_count_grouped|, which grouped \verb|chronic_count| into 0, 1, 2, 3, and 4+
+		\item \verb|days_hospitalized_grouped|, which grouped \verb|days_hospitalized_last_3yrs| into 0, 1--3 and 4+
+	\end{itemize}
+	
+	These grouped variables were created for two reasons. First, they reduce the influence of very few categories in the raw health variables. The grouping of these values creates more stable categories for modelling and interpretation. Second, grouped variables directly support the analysis of stress scenarios because they provide interpretable health-risk states that can be modified under stress scenarios. For example, a hospitalisation stress scenario can be represented by moving policyholders from 0 to 1, or from 1 to 2+. Similarly, a chronic disease stress scenario can be represented by shifting policyholders into higher chronic disease burden groups.
+	
+	The model feature set was then constructed using \verb|get_grouped_model_feature_columns()|. The modelling predictors covered demographic characteristics, socioeconomic variables, lifestyle factors, clinical measurements, insurance plan characteristics, chronic disease indicators, procedure counts, and specialised health-risk groups. The identifier variable \verb|person_id| was excluded from the model features because it does not contain predictive information about medical cost. Variables that directly describe the observed cost or claims outcomes, such as total claims paid or average claim amount, were also excluded from the primary feature set to reduce leakage from the response variable.
+	
+	High-cost indicators were also designed for tail-risk analysis. After calculating empirical cost thresholds at the 90th, 95th, and 99th percentiles, binary variables were created to indicate whether a policyholder was at or above each threshold. For the quantile level \(q\), the high-cost indicator was defined as
+	
+	\begin{equation} \label{eq:4}
+		H_{i,q} =
+		\left\{
+		\begin{array}{ll}
+			1, & \mbox{if } Y_i \geq Q_q \\
+			0, & \mbox{if } Y_i < Q_q
+		\end{array}
+		\right.
+	\end{equation}
+	
+	where \(Q_q\) is the empirical \(q\)-th quantile of annual medical cost. These variables were not used as ordinary predictors in the main cost models. Instead, they were used to evaluate the extent to which different health-risk groups were associated with upper-tail costs and to assess model performance among high-cost policyholders.
+	
+	Missing values were retained during the initial cleaning stage rather than removed, as deleting records would reduce the size and representativeness of the portfolio. Missing values were handled later within the modelling pipelines using imputation. This ensured that the same cleaned and engineered data set could be used consistently in exploratory diagnostics, Ridge Regression, Gradient Boosting, and tail-risk modelling.
+	
+	The data cleaning and feature engineering process converted the raw Kaggle dataset into a structured health insurance portfolio suitable for both individual-level prediction and portfolio-level risk analysis. The engineered grouped variables provide the link between the raw health information and the stress-scenario analysis, while the log-transformed target and high-cost indicators provide the foundation for modelling skewed costs and estimating tail risk.
+	
+	\subsection{Exploratory Diagnostics and Model Choice Justification}
+	
+	Exploratory diagnostics were conducted after data cleaning and feature engineering to assess the suitability of the data set for predictive modelling, stress-scenario analysis, and tail-risk estimation. The purpose of this stage was to inform the methodological choices used later in the analysis.
+	
+	The first part of the diagnostic analysis examined the response variable, annual medical cost. Summary statistics, histograms, density plots, and box plots were used to assess the shape of the cost distribution on both the original scale and the logarithmic transformation scale. This was used to justify the model \(\log(1 + Y_i)\), where \(Y_i\) denotes the annual medical cost for the policyholder \(i\). The transformed response was used in the main regression models because medical cost data are non-negative and commonly display asymmetric upper-tail behaviour.
+	
+	The second part of the exploratory analysis examined the relationship between health-risk factors and annual medical cost. Grouped summaries and box plots were produced for hospitalisation variables, chronic disease burden, and days hospitalised. These diagnostics were used to assess whether the modified health-risk groups provided interpretable categories for modelling and stress tests. In particular, the grouped variables \verb|hospitalizations_grouped|, \verb|chronic_count_grouped|, and \verb|days_hospitalized_grouped| were examined because they are directly related to stress scenarios. This ensured that the later stress tests were based on variables with a clear interpretation in terms of the worsening of portfolio health.
+	
+	The third part of the diagnostic analysis focused on the medical costs of the upper tail. Empirical quantiles of annual medical cost were calculated and used to define high-cost policyholder indicators. These indicators allowed the analysis to examine whether different health-risk groups were associated with higher-cost regions of the portfolio. Tail concentration diagnostics were also used to assess the extent to which portfolio cost was concentrated among policyholders in the upper part of the cost distribution.
+	
+	The exploratory diagnostics also informed the choice of modelling approaches. Ridge Regression was selected as the main statistical benchmark because it provides a regularised linear model that can handle a large number of encoded predictors while remaining relatively interpretable. This made it suitable for assessing the direction and relative strength of the associations between the characteristics of the policyholder and the annual medical cost. However, a linear model may be limited when the relationship between health-risk factors and cost is non-linear or when interactions between variables are important.
+	
+	Gradient Boosting was therefore selected as the main machine learning model. This method was chosen because it can capture non-linear relationships, threshold effects, and interactions between predictors without requiring these relationships to be specified manually in advance. This is particularly relevant for health insurance cost modelling, where the effect of one risk factor may depend on the presence of other risk factors. Gradient Boosting was therefore used to complement Ridge Regression by providing a more flexible predictive model for individual-level annual medical costs.
+	
+	The diagnostic focus on upper-tail costs also motivated the use of tail-aware modelling methods. Tail-weighted models were considered to give greater influence to high-cost observations during training. Quantile Gradient Boosting models were also fitted to estimate conditional upper quantiles of annual medical cost. These methods were included because average-cost models alone may not adequately describe the risk of unusually high claims, which is central to estimating portfolio tail risk.
+	
+	\subsection{Statistical Modelling: Ridge Regression}
+	
+	Ridge Regression was used as the main statistical benchmark model for predicting individual annual medical costs. It was selected because it provides a regularised linear modelling framework that can handle a large number of predictors after categorical encoding while remaining more interpretable than a purely black-box machine learning model. In this context, Ridge Regression was used to establish a baseline for individual-level cost prediction and to provide a comparison point for the more flexible Gradient Boosting models.
+	
+	The Ridge model was fitted to the logarithmic transformed response variable. For the policyholder \(i\), the model can be written as
+	
+	\begin{equation}
+		Y_i^{(\log)} = \beta_0 + \mathbf{x}_i^{\top}\boldsymbol{\beta} + \varepsilon_i
+	\end{equation}
+	
+	where \(Y_i^{(\log)} = \log(1 + Y_i)\), \(Y_i\) is the annual medical cost, \(\mathbf{x}_i\) is the vector of features of the policyholder, \(\beta_0\) is the intercept, \(\boldsymbol{\beta}\) is the vector of regression coefficients and \(\varepsilon_i\) is the error term. The transformed response was used as defined in Equation \Ref{eq:3}.
+	
+	Unlike ordinary least squares, Ridge Regression estimates the coefficients by minimising a penalised loss function. The fitted coefficient vector is obtained by solving
+	
+	\begin{equation}
+		\hat{\beta}_0, \hat{\boldsymbol{\beta}}
+		=
+		\arg\min_{\beta_0, \boldsymbol{\beta}}
+		\left\{
+		\sum_{i \in \mathcal{T}}
+		\left(
+		Y_i^{(\log)} - \beta_0 - \mathbf{x}_i^{\top}\boldsymbol{\beta}
+		\right)^2
+		+
+		\lambda
+		\sum_{j=1}^{p}
+		\beta_j^2
+		\right\}
+	\end{equation}
+	
+	where \(\mathcal{T}\) denotes the training set, \(p\) is the number of model predictors after preprocessing, and \(\lambda\) is the regularisation parameter. The penalty term shrinks coefficient estimates towards zero, reducing over-fitting and improving stability when predictors are correlated or when many encoded categorical variables are included. The intercept term was not penalised.
+	
+	A preprocessing pipeline was applied before model fitting. Numeric variables were imputed using the median and then standardised so that they had a comparable scale before the Ridge penalty was applied. Categorical variables were imputed using the most frequent category and then converted into dummy variables using a one-hot encoding. Unknown categories in the test data were ignored during encoding to ensure that the fitted pipeline could be applied consistently to unseen observations. This preprocessing was embedded inside the model pipeline so that imputation, scaling, and encoding were learnt only from the training data and then applied to the test data. The data set was divided using an 80/20 train-test split, with 80\% of observations used for model training and 20\% held back for testing.
+	
+	The data set was divided into training and test sets using a fixed random seed of 42 to ensure reproducibility. The training set was used to fit the preprocessing pipeline, select the regularisation parameter, and estimate the Ridge coefficients. The test set was held back for model evaluation. The regularisation parameter was selected using cross-validation over a predefined grid of candidate values. This allowed the strength of regularisation to be chosen from the data, while avoiding direct tuning on the test set.
+	
+	Several Ridge model specifications were considered to assess the sensitivity of the benchmark model to feature construction and tail-risk adjustments. The baseline Ridge model used the grouped health-risk features created during feature engineering. A wider regularisation grid was also considered to check whether model performance was sensitive to the range of candidate penalty values. A raw-health-feature specification replaced the grouped hospitalisation and chronic disease variables grouped with their original forms, allowing the grouped and ungrouped representations to be compared. Another specification removed the grouping of hospitalised days to assess whether this feature added useful information beyond the other health-risk variables. An interaction specification was also created by combining the hospitalisation group and the chronic disease group into a single categorical interaction feature.
+	
+	Because the model was fitted on the log-cost scale, predictions had to be transformed back to the original cost scale for interpretation. For a predicted value \(\hat{Y}_i^{(\log)}\), the standard back-transformed prediction was calculated as
+	
+	\begin{equation} \label{eq:7}
+		\hat{Y}_i = \exp\left(\hat{Y}_i^{(\log)}\right) - 1
+	\end{equation}
+	
+	Predicted costs were clipped at zero where necessary so that the final cost predictions remained non-negative. A smearing correction specification was also considered to account for re-transformation bias when converting predictions from the log scale back to the original cost scale. The smearing factor was estimated from the training residuals on the transformed scale and then applied during the back-transformation.
+	
+	A tail-weighted Ridge specification was also fitted to investigate whether the statistical benchmark could be made more sensitive to high-cost observations. In this model, observations in the upper part of the training cost distribution were assigned larger sample weights during model fitting. The purpose of this adjustment was to give the model greater incentive to reduce prediction error for high-cost policyholders.
+	
+	After each Ridge specification was fitted, predictions were generated on the test set and converted back to the original annual cost scale. These predictions were then used in the model evaluation stage to assess average predictive accuracy, residual behaviour, and tail performance. The Ridge models therefore provided an interpretable statistical baseline against which the Gradient Boosting and tail-aware models could be compared.
+
+	\subsection{Machine Learning Modelling: Gradient Boosting}
+	
+	Gradient Boosting was used as the main machine learning approach to predict individual annual medical costs. It was selected because it can model non-linear relationships and interaction effects between policyholder characteristics without requiring these relationships to be specified manually. This is important in health insurance cost modelling because the effect of one health-risk factor can depend on other factors, such as age, chronic disease burden, hospitalisation history, or lifestyle characteristics.
+	
+	The Gradient Boosting model represents the prediction function as an additive ensemble of decision trees. For a policyholder with a feature vector \(\mathbf{x}_i\), the fitted model can be written as
+	
+	\begin{equation}
+		\hat{f}(\mathbf{x}_i)
+		=
+		f_0(\mathbf{x}_i)
+		+
+		\sum_{m=1}^{M}
+		\nu \gamma_m h_m(\mathbf{x}_i)
+	\end{equation}
+	
+	where \(f_0(\mathbf{x}_i)\) is the initial prediction, \(h_m(\mathbf{x}_i)\) is the decision tree fitted at boosting iteration \(m\), \(\gamma_m\) is the contribution of this tree, \(\nu\) is the learning rate, and \(M\) is the total number of boosting iterations. Each tree is fitted sequentially so that later trees focus on the errors remaining from earlier trees. This allows the ensemble to build a flexible prediction function from a series of simpler models.
+	
+	As in Ridge Regression, the main Gradient Boosting models were fitted to the logarithmic transformation of the response variable using Equation \Ref{eq:3}. Fitting the model on the transformed scale reduced the influence of extremely large cost observations during training. After prediction, the fitted values were converted back to the original cost scale using Equation \Ref{eq:7}.
+	
+	Predicted costs were clipped at zero where necessary so that all final predictions were non-negative.
+	
+	A comparable preprocessing workflow was applied before fitting the Gradient Boosting models. Numeric variables were imputed using the median, while categorical variables were imputed using the most frequent category, and then converted into dummy variables using one-hot encoding. Numeric variables were not standardised for the Gradient Boosting models because tree-based models do not require predictors to be on a common scale. The preprocessing steps were fitted only to the training data and then applied to the test data, ensuring that information from the test set was not used during model training.
+	
+	The data set was divided into training and test sets using the same fixed split used for Ridge Regression. This allowed statistical and machine learning models to be compared on a consistent basis. The training set was used to fit the preprocessing pipeline and estimate the Gradient Boosting model. The test set was held back for model evaluation.
+	
+	Several Gradient Boosting specifications were fitted to examine how model design affected average-cost prediction and tail-risk estimation. The baseline specification used the grouped health-risk variables created during feature engineering and was fitted using squared-error loss. A regularised specification was also considered, using a more constrained tree structure and subsampling to reduce over-fitting. A raw-health-feature specification replaced the grouped health-risk variables with their original forms, allowing the grouped and ungrouped feature representations to be compared. A further specification removed the grouped hospitalised days variable to assess whether this information was useful beyond the other health-risk predictors. An interaction specification was also fitted by combining the hospitalisation group and the chronic disease group into a single categorical feature.
+	
+	Alternative loss functions were used to assess whether the model could be made more robust to the distributional features of the medical cost data. The squared-error loss was used for the main mean-cost prediction model. The absolute-error loss was considered because it is less sensitive to large errors than squared-error loss. A Huber loss specification was also fitted as a compromise between squared-error and absolute-error loss. This allowed the modelling strategy to compare the standard mean prediction with more robust alternatives.
+	
+	A tail-weighted Gradient Boosting model was also fitted to increase the influence of high-cost policyholders during training. In this specification, observations in the upper part of the training cost distribution were assigned larger sample weights. The purpose of this model was to assess whether giving more importance to expensive claims could improve prediction in the upper tail of the cost distribution.
+	
+	Quantile Gradient Boosting models were fitted as a separate tail-risk modelling approach. Instead of estimating the conditional mean of the annual medical cost, these models estimate conditional upper quantiles. For a quantile level \(\alpha\), the model minimises the pinball loss
+	
+	\begin{equation} \label{eq:9}
+		L_{\alpha}(Y_i, \hat{Y}_i)
+		=
+		\begin{cases}
+			\alpha (Y_i - \hat{Y}_i), & \text{if } Y_i \geq \hat{Y}_i \\
+			(1 - \alpha)(\hat{Y}_i - Y_i), & \text{if } Y_i < \hat{Y}_i
+		\end{cases}
+	\end{equation}
+	
+	This asymmetric loss penalises under-prediction and over-prediction differently, allowing the model to estimate a chosen upper point of the conditional cost distribution. The quantile models were fitted on the transformed response scale and then converted back to the original annual cost scale. Since the logarithmic transformation is monotonic, the back-transformed predicted log-quantiles can be interpreted as corresponding predicted cost quantiles on the original scale. The quantile models were therefore used to assess the risk of unusually high annual medical costs for individual policyholders and to support the portfolio tail-risk metrics.
+	
+	After fitting each Gradient Boosting specification, predictions were generated for the test set and converted back to the original annual cost scale where required. The resulting predictions were used in the model evaluation stage to compare the average predictive accuracy, residual behaviour, and tail performance. The Gradient Boosting models therefore provided a flexible machine learning counterpart to Ridge Regression and formed the main modelling basis for assessing non-linear cost behaviour, high-cost policyholder risk and portfolio-level stress responses.
+	
+	\subsection{Tail Risk Estimation Framework}
+	
+	A separate tail-risk estimation framework was used because the research questions are concerned not only with average medical cost, but also with the risk of unusually high costs within the health insurance portfolio. In insurance applications, the upper tail of the cost distribution is important because a relatively small number of high-cost policyholders can have a large effect on total portfolio cost. Therefore, both descriptive and model-based approaches to tail-risk estimation were considered.
+	
+	The first part of the framework used empirical tail summaries calculated from the observed annual medical cost variable. Let \(Y_i\) denote the annual medical cost of the policyholder \(i\). For a chosen quantile level \(q\), the empirical cost threshold was denoted by \(Q_q\). Policyholders with costs at or above this threshold were classified as high-cost cases for that quantile level. The high-cost indicator was defined using Equation \Ref{eq:4}.
+	
+	These indicators were created for upper-tail quantile levels and used to identify policyholders in the high-cost region of the portfolio. They were not used as ordinary predictors in the main cost models. Instead, they were used for diagnostic and evaluation purposes, including assessing how model errors behaved for high-cost policyholders and examining whether stress-related health variables were associated with upper-tail cost exposure.
+	
+	The second part of the framework considered empirical portfolio tail measures. Individual predicted or observed costs were aggregated to form portfolio-level summaries. The total cost of the portfolio was defined by Equation \Ref{eq:1} and in the predictive setting, the corresponding cost of the model-based portfolio was defined by Equation \Ref{eq:2}.
+	
+	Here, \(\hat{Y}_i\) is the annual cost predicted for the policyholder \(i\). In addition to the total and mean predicted cost, the upper quantiles of the predicted cost distribution were considered. These included predicted cost thresholds at the upper-tail quantile levels. This allowed the analysis to assess whether a model captured the high-cost region of the portfolio, rather than only its central tendency.
+	
+	Tail concentration was also considered as part of the portfolio risk framework. This measured the proportion of total portfolio cost attributable to policyholders in a high-cost group. For a high-cost indicator \(H_{i,q}\), the share of portfolio cost generated by policyholders at or above the threshold \(Q_q\) was defined as
+	
+	\begin{equation}
+		C_q =
+		\frac{\sum_{i=1}^{n} Y_i H_{i,q}}
+		{\sum_{i=1}^{n} Y_i}
+	\end{equation}
+	
+	This measure was used to describe the extent to which the portfolio cost was concentrated in the upper tail. In the model evaluation stage, the same idea was applied to predicted costs to assess whether the fitted models preserved the concentration of cost risk among high-cost policyholders.
+	
+	In addition to upper-tail thresholds and tail concentration, tail value-at-risk was used to measure the severity of costs beyond a chosen upper quantile. Quantiles identify the point at which the upper tail begins, whereas tail value-at-risk summarises the average cost among observations beyond that threshold. For a generic cost variable \(Z_i\), representing observed costs \(Y_i\) or predicted costs \(\hat{Y}_i\), the upper-tail set was defined as
+	
+	\begin{equation}
+		\mathcal{U}_q(Z)
+		=
+		\{ i : Z_i > Q_q(Z) \}
+	\end{equation}
+	
+	where \(Q_q(Z)\) is the empirical \(q\)-th quantile of \(Z_i\). The tail value-at-risk was then defined as
+	
+	\begin{equation}
+		\mathrm{TVaR}_q(Z)
+		=
+		\frac{1}{|\mathcal{U}_q(Z)|}
+		\sum_{i \in \mathcal{U}_q(Z)}
+		Z_i
+	\end{equation}
+
+	This measure was calculated for both observed and predicted costs. Comparison of \(\mathrm{TVaR}_q(Y)\) with \(\mathrm{TVaR}_q(\hat{Y})\) allowed the analysis to assess whether the fitted models captured not only the location of the upper tail but also the average severity of costs once the tail threshold had been exceeded. This provided an additional tail-risk measure at the portfolio-level.
+	
+	The third part of the framework used tail-weighted model fitting. Standard regression models minimise an average loss across all observations, which can lead to weaker performance for high-cost policyholders if these observations are relatively uncommon. To address this, tail-weighted versions of Ridge Regression and Gradient Boosting were fitted. In these models, observations in the upper part of the training cost distribution were assigned larger sample weights. The weighted training objective can be written generically as
+	
+	\begin{equation}
+		\min_f
+		\sum_{i \in \mathcal{T}}
+		w_i L(Y_i, f(\mathbf{x}_i))
+	\end{equation}
+	
+	where \(\mathcal{T}\) denotes the training set, \(w_i\) is the sample weight of the policyholder \(i\), \(L(\cdot)\) is the model loss function, and \(f(\mathbf{x}_i)\) is the predicted value of the fitted model. Larger weights were assigned to high-cost observations so that the model placed greater emphasis on reducing errors in the upper tail. This approach was included to assess whether tail-sensitive training improved the estimation of high-cost policyholders.
+	
+	The fourth part of the framework used Quantile Gradient Boosting. Unlike mean regression models, which estimate the conditional expected cost, quantile models estimate selected points of the conditional cost distribution. For a quantile level \(\alpha\), the quantile model estimates
+	
+	\begin{equation}
+		Q_{\alpha}(Y_i \mid \mathbf{x}_i)
+	\end{equation}
+	
+	where \(Q_{\alpha}(Y_i \mid \mathbf{x}_i)\) is the conditional \(\alpha\)-quantile of the annual medical cost given the vector of characteristics of the policyholder \(\mathbf{x}_i\). The model was trained using Equation \Ref{eq:9}.
+	
+	This loss function is asymmetric, so it allows the model to target a chosen part of the conditional distribution. Therefore, upper quantile models were used to estimate high conditional annual medical costs. These estimates are relevant because they provide a model-based method for estimating the risk of unusually expensive policyholders.
+	
+	Quantile models were assessed using two types of tail-specific evaluation. The first was pinball loss, which measures the accuracy of the estimated conditional quantile under the same asymmetric loss used for training. The second was empirical coverage. For a fitted quantile model at level \(\alpha\), empirical coverage was defined as the proportion of test observations for which the observed cost was below the predicted quantile:
+	
+	\begin{equation}
+		\widehat{\mathrm{Coverage}}_{\alpha}
+		=
+		\frac{1}{n_{\mathrm{test}}}
+		\sum_{i \in \mathcal{D}_{\mathrm{test}}}
+		I(Y_i \leq \hat{Y}_{i,\alpha})
+	\end{equation}
+	
+	where \(I(\cdot)\) is an indicator function and \(\mathcal{D}_{\mathrm{test}}\) denotes the test set. A well-calibrated quantile model should produce empirical coverage close to the target quantile level, although sampling variation and model error may lead to differences.
+	
+	Because the upper quantile models were fitted separately, an additional diagnostic was used to check for quantile crossing. Quantile crossing occurs when a higher predicted quantile is below a lower predicted quantile for the same policyholder, for example, when the predicted 99th percentile is below the predicted 95th percentile. This would be inconsistent with the interpretation of conditional quantiles. The predicted quantiles were therefore checked to ensure that, for each policyholder, the estimated upper quantiles were ordered monotonically. Where crossing occurred, it was recorded as a limitation of fitting separate quantile models. A monotonic correction could also be applied by reordering the predicted quantiles for each policyholder before calculating portfolio-level tail summaries.
+	
+	\subsection{Stress Scenario Analysis}
+	
+	The purpose of this stage was to estimate how the predicted portfolio costs would change if the health profile of the insured population worsened. The analysis focused on hospitalisation and chronic disease burden because these variables have a direct interpretation of health insurance risk and were represented in the engineered feature set used for the modelling.
+	
+	The stress tests were implemented by creating modified copies of the modelling dataset. The original cleaned and engineered data set was retained as the baseline portfolio, while each stress scenario was created by altering selected health-risk variables in a separate scenario data set. This ensured that the baseline and stressed portfolios contained the same policyholders, with differences arising only from the specified changes in health-risk status. All other characteristics of the policyholders were kept constant unless they were directly part of the stress scenario.
+	
+	Let \(\mathbf{x}_i^{(0)}\) denote the baseline characteristic vector for the policyholder \(i\), and let \(\mathbf{x}_i^{(s)}\) denote the corresponding characteristic vector in the stress scenario \(s\). A fitted predictive model \(f(\cdot)\) was then used to generate baseline and stressed annual cost predictions. After the model comparison stage, the selected tail-weighted Gradient Boosting specification was refitted on the full cleaned portfolio for the stress-scenario analysis. This refit was used only for portfolio scenario estimation, while the held-out test set remained the basis for predictive model evaluation.
+	
+	\begin{equation}
+		\hat{Y}_i^{(0)} = f(\mathbf{x}_i^{(0)})
+	\end{equation}
+	
+	\begin{equation}
+		\hat{Y}_i^{(s)} = f(\mathbf{x}_i^{(s)})
+	\end{equation}
+	
+	The baseline predicted portfolio cost was defined as
+	
+	\begin{equation}
+		\hat{S}^{(0)} = \sum_{i=1}^{n} \hat{Y}_i^{(0)}
+	\end{equation}
+	
+	and the expected portfolio cost under the stress scenario \(s\) was defined as
+	
+	\begin{equation}
+		\hat{S}^{(s)} = \sum_{i=1}^{n} \hat{Y}_i^{(s)}
+	\end{equation}
+	
+	The absolute change in the predicted portfolio cost was then calculated as
+	
+	\begin{equation}
+		\Delta \hat{S}^{(s)} = \hat{S}^{(s)} - \hat{S}^{(0)}
+	\end{equation}
+	
+	The relative change in the predicted portfolio cost was calculated as
+	
+	\begin{equation}
+		R^{(s)} =
+		\frac{\hat{S}^{(s)} - \hat{S}^{(0)}}{\hat{S}^{(0)}}
+	\end{equation}
+	
+	These measures allowed each scenario to be assessed in terms of its effect on the aggregate cost of the portfolio.
+	
+	The hospitalisation stress scenario was constructed by worsening the hospitalisation profile of selected policyholders. This was done by shifting policyholders from lower risk groups for hospitalisation to higher risk groups for hospitalisation using engineered variables \verb|hospitalizations_grouped| and \verb|days_hospitalized_grouped|. For example, a policyholder in a lower hospitalisation group could be moved into the next higher group, while policyholders already in the highest group remained in that group. This approach created an adverse but interpretable change in portfolio health status while preserving the overall structure of the data set.
+	
+	The chronic disease stress scenario was constructed in a similar way using the engineered variable \verb|chronic_count_grouped|. Policyholders were moved from lower chronic disease burden groups to higher burden groups according to the specified stress design. This represented a worsening in the prevalence of chronic diseases in the portfolio. The purpose of this scenario was to estimate how the fitted models respond when the portfolio contains a higher concentration of policyholders with chronic diseases.
+	
+	For each stress scenario, the proportion of policyholders shifted between risk groups was fixed in advance. The severity of the scenario was represented using a set of deterministic stress levels, such as mild, moderate, and severe deterioration. Each stress level corresponded to a pre-specified proportion of eligible policyholders being moved into a higher-risk category. These stress levels were not intended to forecast a specific future event. Instead, they provided a sensitivity framework for assessing how the portfolio cost responds as the health-risk composition of the portfolio worsens.
+	
+	The eligibility for shifting was defined separately for each stress type. In the hospitalisation stress scenario, policyholders who were not already in the highest hospitalisation group were eligible to move one category upward. The associated days hospitalised variable was updated consistently so that stressed hospitalisation status remained consistent with the grouped days hospitalised feature. In the chronic disease stress scenario, policyholders who were not already in the highest chronic disease burden group were eligible to move one category upward. Policyholders already in the highest group remained unchanged.
+	
+	Eligible policyholders were selected using a reproducible rule and a fixed random seed. This ensured that the stress scenarios could be repeated exactly and that the differences between the baseline and stressed portfolios were attributable to the specified health-risk deterioration rather than to changes in data processing. The same scenario definitions were applied consistently across the baseline and stressed portfolio datasets so that scenario responses could be compared under identical stress assumptions.
+	
+	A combined stress scenario was also considered. In this case, the risk of hospitalisation and the burden of chronic disease worsened within the same scenario dataset. This was included because adverse health conditions can occur together in practice and the financial impact of combined deterioration can be greater than the effect of either of the risk factors considered separately. The combined scenario therefore provided a more severe portfolio stress test.
+	
+	For each scenario, the fitted model was applied to both the baseline and stressed datasets. The individual predicted costs were then aggregated to estimate the response at the portfolio level. In addition to the total predicted portfolio cost, the analysis also considered the mean predicted cost and upper-tail predicted cost summaries. For a quantile level \(q\), the baseline and stressed predicted cost thresholds were denoted by \(\hat{Q}_q^{(0)}\) and \(\hat{Q}_q^{(s)}\), respectively. The change in the predicted upper-tail threshold was defined as
+	
+	\begin{equation}
+		\Delta \hat{Q}_q^{(s)}
+		=
+		\hat{Q}_q^{(s)} - \hat{Q}_q^{(0)}
+	\end{equation}
+	
+	The response to the scenario was also assessed using changes in the predicted tail concentration and the predicted tail value-at-risk. This allowed each stress scenario to be evaluated in terms of both aggregate cost impact and upper-tail severity. A scenario could therefore be interpreted as increasing portfolio risk if it raised total predicted cost, shifted upper predicted quantiles upward, increased the concentration of cost among high-risk policyholders, or increased the predicted average cost beyond an upper-tail threshold.
+	
+	The stress-scenario analysis was therefore designed to connect individual-level predictive modelling with portfolio-level risk measurement. By modifying hospitalisation and chronic disease variables, applying fitted models to stressed portfolios and comparing aggregate and tail summaries against the baseline, the methodology provides a direct framework for assessing how adverse health-risk scenarios affect health insurance cost exposure.
+	
+	\subsection{Model Evaluation and Comparison Metrics}
+	
+	Model evaluation was carried out on the held-out test set so that all model specifications could be compared on observations that were not used for model fitting. The same test set was used across the Ridge Regression and Gradient Boosting models to ensure that differences in performance reflected differences in modelling approach rather than differences in the evaluation sample. Since the main models were fitted to the logarithmic transformed response, the predictions were converted back to the original annual medical cost scale before evaluation. This ensured that the metrics were interpretable in terms of monetary cost and suitable for portfolio-level aggregation.
+	
+	Let \(Y_i\) denote the annual medical cost observed for the policyholder \(i\) in the test set, and let \(\hat{Y}_i\) denote the corresponding predicted annual medical cost. The prediction error was defined as
+	
+	\begin{equation}
+		e_i = Y_i - \hat{Y}_i
+	\end{equation}
+	
+	so that positive values indicate under-prediction and negative values indicate over-prediction.
+	
+	Average predictive accuracy was assessed using the root mean squared error and the mean absolute error. The root mean squared error was defined as
+	
+	\begin{equation}
+		\mathrm{RMSE}
+		=
+		\sqrt{
+			\frac{1}{n_{\mathrm{test}}}
+			\sum_{i \in \mathcal{D}_{\mathrm{test}}}
+			e_i^2
+		}
+	\end{equation}
+	
+	where \(n_{\mathrm{test}}\) is the number of observations in the test set. RMSE gives greater weight to larger errors and is therefore sensitive to large prediction mistakes. The mean absolute error was defined as
+	
+	\begin{equation}
+		\mathrm{MAE}
+		=
+		\frac{1}{n_{\mathrm{test}}}
+		\sum_{i \in \mathcal{D}_{\mathrm{test}}}
+		\left| e_i \right|
+	\end{equation}
+	
+	MAE measures the average absolute prediction error on the original annual cost scale and is less sensitive to extreme errors than RMSE.
+	
+	Model fit was also assessed using the coefficient of determination, \(R^2\). This was defined as
+	
+	\begin{equation}
+		R^2
+		=
+		1
+		-
+		\frac{
+			\sum_{i \in \mathcal{D}_{\mathrm{test}}}
+			(Y_i - \hat{Y}_i)^2
+		}{
+			\sum_{i \in \mathcal{D}_{\mathrm{test}}}
+			(Y_i - \bar{Y}_{\mathrm{test}})^2
+		}
+	\end{equation}
+	
+	where \(\bar{Y}_{\mathrm{test}}\) is the mean annual medical cost observed in the test set. This metric measures the proportion of variation in annual medical cost explained by the model relative to a baseline model that predicts the mean of the test set.
+	
+	Bias was used to assess whether a model tended to systematically under-predict or over-predict annual medical costs. It was calculated as the mean prediction error:
+	
+	\begin{equation}
+		\mathrm{Bias}
+		=
+		\frac{1}{n_{\mathrm{test}}}
+		\sum_{i \in \mathcal{D}_{\mathrm{test}}}
+		e_i
+	\end{equation}
+	
+	Under the definition of \(e_i = Y_i - \hat{Y}_i\), a positive bias indicates an average under-prediction, while a negative bias indicates an average over-prediction.
+	
+	The standard deviation of the prediction error was also calculated to separate the variability of the prediction errors from their average bias. It was defined as
+	
+	\begin{equation}
+		\mathrm{SDEP}
+		=
+		\sqrt{
+			\frac{1}{n_{\mathrm{test}} - 1}
+			\sum_{i \in \mathcal{D}_{\mathrm{test}}}
+			(e_i - \bar{e})^2
+		}
+	\end{equation}
+	
+	where \(\bar{e}\) is the mean prediction error in the test set. This metric measures the spread of prediction errors after accounting for systematic bias.
+	
+	Pearson's correlation was used as an additional measure of the association between observed and predicted costs. It was defined as
+	
+	\begin{equation}
+		r
+		=
+		\frac{
+			\sum_{i \in \mathcal{D}_{\mathrm{test}}}
+			(Y_i - \bar{Y}_{\mathrm{test}})
+			(\hat{Y}_i - \bar{\hat{Y}}_{\mathrm{test}})
+		}{
+			\sqrt{
+				\sum_{i \in \mathcal{D}_{\mathrm{test}}}
+				(Y_i - \bar{Y}_{\mathrm{test}})^2
+			}
+			\sqrt{
+				\sum_{i \in \mathcal{D}_{\mathrm{test}}}
+				(\hat{Y}_i - \bar{\hat{Y}}_{\mathrm{test}})^2
+			}
+		}
+	\end{equation}
+	
+	where \(\bar{\hat{Y}}_{\mathrm{test}}\) is the mean predicted annual medical cost in the test set. Correlation was included because it assesses whether the model ranks policyholders in a similar order to the observed costs, even when the absolute prediction scale is imperfect.
+	
+	Tail-specific evaluation metrics were also used to focus on portfolio tail risk, rather than only average predictive accuracy. First, the performance of the model was assessed separately for policyholders in the upper part of the observed cost distribution. For an upper-tail quantile level \(q\), let \(\mathcal{U}_q^{\mathrm{test}}\) denote the set of test observations with observed costs above the empirical threshold \(Q_q\). The upper-tail MAE was defined as
+	
+	\begin{equation}
+		\mathrm{MAE}_q
+		=
+		\frac{1}{|\mathcal{U}_q^{\mathrm{test}}|}
+		\sum_{i \in \mathcal{U}_q^{\mathrm{test}}}
+		\left| e_i \right|
+	\end{equation}
+	
+	This metric measures the accuracy with which each model predicts the costs of high-cost policyholders. It was calculated for the upper-tail regions of the portfolio so that model performance could be assessed among the policyholders most relevant to tail-risk estimation.
+	
+	The models were also evaluated by comparing the observed and predicted upper-tail cost thresholds. For a quantile level \(q\), let \(Q_q(Y)\) denote the empirical quantile of the observed test set costs, and let \(Q_q(\hat{Y})\) denote the corresponding empirical quantile of the predicted costs. Quantile under-prediction was defined as
+	
+	\begin{equation}
+		U_q
+		=
+		Q_q(Y) - Q_q(\hat{Y})
+	\end{equation}
+	
+	A positive value of \(U_q\) indicates that the model underestimates the observed upper-tail cost threshold, while a negative value indicates overestimation. This metric was included because a model may perform reasonably well on average while still failing to reproduce the upper tail of the cost distribution.
+	
+	For the quantile Gradient Boosting models, the evaluation focused on the quantile-specific metrics defined in the tail-risk framework. Pinball loss was used to assess the accuracy of predicted conditional quantiles, while empirical coverage was used to assess whether the fitted quantiles achieved the intended coverage level on the test set. These metrics were used because quantile models are designed to estimate the upper points of the conditional cost distribution rather than the conditional mean.
+	
+	The final model comparison therefore used both average-cost and tail-specific criteria. RMSE, MAE, \(R^2\), bias, SDEP and Pearson correlation assessed overall predictive performance, while upper-tail MAE, quantile under-prediction, pinball loss, empirical coverage, tail concentration and tail value-at-risk assessed tail-risk performance. This evaluation framework ensured that the selected models were judged not only by their ability to predict typical annual medical costs, but also by their ability to estimate high-cost policyholder risk and portfolio tail exposure.
+	
+	For the stress-scenario analysis, the models were compared according to whether they produced stable and interpretable portfolio-level responses when the variables of hospitalisation and chronic disease were stressed. Therefore, the preferred model for stress testing was required to provide plausible individual predictions, stable aggregate portfolio estimates, and interpretable changes in mean and upper-tail cost measures in each scenario.
+	
+	For the tail-risk analysis, the models were compared according to their ability to represent the upper part of the cost distribution. A model was considered more suitable for tail-risk estimation if it reduced upper-tail prediction error, limited systematic under-prediction of high-cost thresholds, produced quantile coverage close to the target level, and gave reasonable estimates of tail concentration and tail value-at-risk. Where a model performed well on average-cost metrics but poorly on tail-specific metrics, this was interpreted as evidence that average predictive accuracy alone was insufficient for health insurance tail-risk modelling.
+	
+	The final interpretation therefore considered the trade-off between average predictive performance, tail-risk performance, and scenario stability. This ensured that the modelling conclusions were aligned with the objectives: estimating how the portfolio responds to adverse health-risk scenarios and assessing how statistical and machine learning models can estimate high-cost portfolio risk.
+	
+	\subsection{Model Interpretation}
+	
+	Model interpretation was used to understand how the fitted models related policyholder characteristics to predicted annual medical cost. This stage was included because the analysis is concerned not only with predictive accuracy, but also with identifying the health-risk features that drive cost behaviour and portfolio tail risk. The interpretation framework focused on Ridge Regression coefficients, Gradient Boosting feature importance, and SHAP values.
+	
+	For the Ridge Regression models, interpretation was based on the estimated coefficients from the fitted linear model. Since the Ridge models were fitted on the logarithmic transformed cost scale, each coefficient represents the association between a predictor and \(\log(1 + Y_i)\), holding the other model variables fixed. The fitted Ridge model can be written as
+	
+	\begin{equation}
+		\hat{Y}_i^{(\log)}
+		=
+		\hat{\beta}_0
+		+
+		\sum_{j=1}^{p}
+		x_{ij}\hat{\beta}_j
+	\end{equation}
+	
+	where \(x_{ij}\) is the predictor value \(j\) for the policyholder \(i\), \(\hat{\beta}_j\) is the estimated Ridge coefficient and \(p\) is the number of predictors after preprocessing. The sign of \(\hat{\beta}_j\) indicates whether the predictor is associated with a higher or lower predicted log-cost, while the magnitude gives an indication of the relative strength of the association after preprocessing. Because Ridge Regression shrinks coefficients towards zero, the coefficient estimates were interpreted as regularised associations rather than uncorrected effect estimates.
+	
+	For categorical predictors, the interpretation was based on the one-hot encoded categories produced during preprocessing. Since the encoded categories were retained within a regularised model, the coefficients were interpreted as regularised category-level associations rather than as simple contrasts against a single omitted reference category. This allowed grouped health-risk variables, such as hospitalisation group and chronic disease burden group, to be interpreted in terms of their contribution to predicted annual medical cost. These variables were particularly important for connecting the model interpretation stage with the stress-scenario analysis.
+	
+	For the Gradient Boosting models, the interpretation first used the importance of features. Feature importance was used to identify which predictors contributed the most to the fitted tree ensemble. Unlike the Ridge coefficients, these importance values do not provide a signed linear association. Instead, they indicate the extent to which each feature was used by the ensemble to reduce the prediction error across the trees. This provided a model-level summary of which policyholder characteristics were most influential in the non-linear machine learning model.
+	
+	SHAP values were then used to provide a more detailed interpretation of both the Ridge Regression and Gradient Boosting predictions. SHAP values decompose an individual prediction into additive contributions from each feature. For the policyholder \(i\), the prediction can be expressed as
+	
+	\begin{equation}
+		\hat{f}(\mathbf{x}_i)
+		=
+		\phi_0
+		+
+		\sum_{j=1}^{p}
+		\phi_{ij}
+	\end{equation}
+	
+	where \(\phi_0\) is the baseline model output and \(\phi_{ij}\) is the SHAP contribution of feature \(j\) to the prediction for policyholder \(i\). A positive SHAP value indicates that the feature increases the prediction relative to the baseline, while a negative SHAP value indicates that it decreases the prediction. This made it possible to examine both the importance of global features and local explanations for individual predicted costs.
+	
+	Global SHAP summaries were used to assess which variables had the greatest overall influence on model predictions. This was useful for identifying whether the main cost drivers were consistent with the health-risk variables used in the stress-scenario design. Local SHAP explanations were also considered because they show how the fitted model produces predictions for individual policyholders. This is relevant in a portfolio setting, where high-cost individuals may be driven by different combinations of demographic, lifestyle, clinical, and insurance-related variables.
+	
+	For the tail-risk analysis, the interpretation focused on whether the variables that influence the predicted average cost were also important for the estimate of the upper cost. Feature importance and SHAP summaries from tail-aware and quantile Gradient Boosting models were used to assess which predictors contributed to high predicted cost quantiles. This allowed the interpretation stage to connect directly to the tail risk analysis by examining the drivers of predicted tail risk, rather than only the drivers of mean cost.
+
+	\subsection{Software and Reproducibility}
+	
+	All data preparation, exploratory diagnostics, modelling, stress testing, tail-risk estimation, and final model comparison were carried out in Python using Jupyter notebooks. The analysis was organised as a structured project rather than as a single stand-alone script. This allowed the workflow to be separated into distinct stages, including data audit, model choice diagnostics, Ridge Regression modelling, Ridge Regression experiments, Gradient Boosting modelling, Gradient Boosting experiments, stress-scenario analysis, tail-risk portfolio metrics, and final results-table construction.
+	
+	The project used reusable Python modules for common tasks such as loading the raw data set, cleaning the data, preparing modelling features, fitting models, generating predictions, calculating evaluation metrics, and producing model-interpretation outputs. This reduced duplication across notebooks and ensured that the same processing logic was applied consistently throughout the analysis. In particular, the raw data was loaded through a dedicated loading function, cleaned through a common cleaning pipeline, and converted into modelling datasets through a shared feature preparation function.
+	
+	A consistent 80/20 train--test split was used across the main modelling notebooks, with 80\% of observations used for model training and 20\% held back for testing. A fixed random seed of 42 was used for the train--test split and for stochastic procedures where applicable. This ensured that the Ridge Regression and Gradient Boosting models could be compared on the same observations and that the data split, model fitting procedures, and sampling-based interpretation steps could be reproduced. The same target transformation and comparable feature sets were also used across models, where appropriate, allowing differences in model behaviour to be attributed to the modelling method rather than to inconsistent data preparation.
+	
+	Preprocessing was implemented within modelling pipelines. Numeric and categorical preprocessing steps were fitted only on the training data and then applied to the test data. Numeric variables were imputed using the median, categorical variables were imputed using the most frequent category, and categorical predictors were encoded using one-hot encoding. Numeric variables were standardised for Ridge Regression but not for Gradient Boosting because tree-based models do not require predictors to be on a common scale. Embedding preprocessing within the model pipeline prevented information from the test data entering the training process. The same principle was applied to model selection and tuning: model specifications were developed using the training data, while the test data were reserved for final evaluation.
+	
+	The analysis was documented in a series of notebooks. The data audit notebook defined the modelling problem and examined the structure of the dataset. The model choice diagnostics notebook assessed the response variable, health-risk features, and tail-risk characteristics that motivated the later modelling strategy. The Ridge Regression notebooks developed the statistical benchmark model and tested alternative Ridge specifications, including grouped features, raw health features, interaction terms, smearing correction, and tail-weighted fitting. Gradient Boosting notebooks developed the machine learning model and fitted alternative specifications, including regularised, robust, tail-weighted, and quantile-based models.
+	
+	The stress-scenario analysis notebook applied the fitted prediction workflow to the baseline and stressed portfolios. Hospitalisation, chronic disease, and combined stress scenarios were created using reproducible deterministic rules, and portfolio responses were summarised using total predicted cost, mean predicted cost, upper-tail quantiles, tail concentration and tail value-at-risk. The tail-risk portfolio metrics notebook compared statistical and machine learning models using average-cost metrics and tail-specific metrics, including upper-tail MAE, quantile under-prediction, pinball loss, empirical coverage, tail concentration, tail value-at-risk, and quantile-crossing diagnostics. The final model comparison notebook combined the outputs from the stress-scenario and tail-risk notebooks into final results-ready tables and figures.
+	
+	The model outputs were stored in structured objects and evaluated using shared metric functions. Predictions were generated on the same held-out test data and converted back to the original annual cost scale where required. This was necessary because the main models were fitted to the logarithmically transformed response, while interpretation, tail-risk estimation, and portfolio aggregation were carried out on the original cost scale. The output of the later notebooks was exported as structured tables so that the final results could be reproduced without manually copying the values between notebooks.
+	
+	The stress-scenario analysis was designed to use the selected fitted models and preprocessing pipelines from the predictive modelling stage. Baseline and stressed datasets were passed through the same prediction workflow, ensuring that scenario comparisons reflected changes in health-risk variables rather than changes in data processing. The final model comparison notebook then used the exported stress-scenario and tail-risk outputs to produce consolidated tables for the results section.
+	
+	\subsection{Methodological Assumptions and Limitations}
+	
+	Several methodological assumptions were made to use the data set for the modelling of the health insurance portfolio, the analysis of stress scenarios, and the estimation of tail risks. These assumptions define the scope of the analysis and should be taken into account when interpreting the results.
+	
+	The data set was treated as a cross-sectional health insurance portfolio. Each observation was assumed to represent an insured policyholder at a fixed time point. This allowed individual predicted costs to be aggregated into portfolio-level cost measures. However, because the data are cross-sectional, the modelling framework does not capture how individual policyholders change over time. As a result, the analysis does not explicitly model disease progression, ageing, policy renewals, claim development, or changes in treatment behaviour over multiple years.
+	
+	The annual medical cost variable was treated as the target outcome for predictive modelling and portfolio aggregation. The analysis therefore focused on total annual cost rather than separately modelling claim frequency and claim severity. This is suitable for estimating overall cost exposure, but it does not distinguish between policyholders who generate high annual cost through many smaller claims and those who generate high annual cost through a small number of severe claims.
+	
+	The models were interpreted as predictive models rather than causal models. The fitted relationships between policyholder characteristics and annual medical cost should therefore be interpreted as associations learnt from the data. For example, if hospitalisation history or chronic disease burden is associated with a higher predicted cost, this does not by itself establish a causal effect. The objective of the modelling was to estimate the cost risk and the response of the portfolio, not to identify causal effects of the treatment or clinical mechanisms.
+	
+	The stress scenarios were deterministic and based on changes in the selected engineered health-risk variables. In the hospitalisation and chronic disease scenarios, policyholders were shifted into higher-risk categories while other characteristics were kept constant. This provides an interpretable way to assess portfolio sensitivity to adverse health conditions, but simplifies how health deterioration can occur in practice. In reality, worsening health conditions can also be associated with changes in other variables, such as procedure counts, medication use, use of healthcare, choice of insurance plan, or claim behaviour.
+	
+	The grouped health-risk variables were assumed to provide a useful balance between interpretability and model stability. The grouping of variables such as hospitalisation history, chronic disease count, and days hospitalised made stress scenarios easier to define and reduced the effect of sparse categories. However, grouping also reduces granularity. Policyholders within the same group may still have different risk profiles, and some information from the original variables may be lost.
+	
+	The main predictive models were fitted using a logarithmic transformation of the annual medical cost. This transformation was used because medical cost data is non-negative and often highly asymmetric. The transformation makes the modelling problem more stable, but it also introduces the need to convert predictions back to the original cost scale. This back-transformation can introduce bias, particularly in the upper tail of the cost distribution. A smearing correction was considered to reduce this issue, but re-transformation remains an important limitation when interpreting predicted costs.
+	
+	Tail-risk estimates depend on the availability and quality of high-cost observations in the data. Upper-tail modelling is inherently more uncertain than average-cost modelling because extreme cost observations are less common. Tail-weighted models and Quantile Gradient Boosting were included to address this issue, but estimates of high-cost risk may still be sensitive to the particular observations available in the training and test sets. In addition, separately fitted quantile models may produce quantile crossing, so predicted upper quantiles were checked for monotonic ordering before being used in portfolio-level summaries.
+	
+	The machine learning models were limited to the predictors available in the dataset. Important drivers of medical cost may be absent, measured imperfectly, or represented only indirectly. Examples could include a detailed diagnosis history, treatment pathways, provider information, regional healthcare pricing, policy exclusions, benefit limits, or longitudinal claim history. Predictive models can only learn relationships from the variables included in the modelling dataset.
+	
+	The portfolio aggregation framework assumed that the individual predicted costs could be summed to estimate the total portfolio cost. This is appropriate for estimating expected aggregate exposure, but it does not explicitly model dependence between policyholders. In practice, health insurance portfolios can be affected by shared shocks, such as epidemics, disruption of the regional healthcare system, inflation in medical prices, or changes in clinical practice. These systemic effects are not fully captured by summing individual predictions from a static data set.
+	
+	Finally, the model evaluation was based on a held-out test set from the same dataset. This provides an internal assessment of predictive performance, but does not guarantee that the models would perform equally well on a different insurance portfolio, a different time period, or real operational claims data. External validation would be needed to assess generalisability beyond the dataset used.
+	
+	These assumptions and limitations mean that the analysis should be interpreted as a structured predictive and stress-testing framework rather than as a complete actuarial pricing or reserving model. The methodology is suitable for comparing statistical and machine learning approaches, estimating portfolio sensitivity to selected health-risk scenarios, and assessing upper-tail cost risk within the available data. However, more work would be required to extend the framework to longitudinal claims data, causal modelling, external validation, and more detailed actuarial risk modelling.
